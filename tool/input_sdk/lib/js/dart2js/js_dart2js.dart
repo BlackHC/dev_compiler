@@ -357,7 +357,7 @@ class JsArray<E> extends JsObject with ListMixin<E> {
     if (index is num && index == index.toInt()) {
       _checkIndex(index);
     }
-    return super[index];
+    return super[index] as E;
   }
 
   void operator []=(Object index, E value) {
@@ -403,12 +403,12 @@ class JsArray<E> extends JsObject with ListMixin<E> {
 
   E removeAt(int index) {
     _checkIndex(index);
-    return callMethod('splice', [index, 1])[0];
+    return callMethod('splice', [index, 1])[0] as E;
   }
 
   E removeLast() {
     if (length == 0) throw new RangeError(-1);
-    return callMethod('pop');
+    return callMethod('pop') as E;
   }
 
   void removeRange(int start, int end) {
@@ -421,7 +421,7 @@ class JsArray<E> extends JsObject with ListMixin<E> {
     int length = end - start;
     if (length == 0) return;
     if (skipCount < 0) throw new ArgumentError(skipCount);
-    var args = [start, length]..addAll(iterable.skip(skipCount).take(length));
+    var args = <Object>[start, length]..addAll(iterable.skip(skipCount).take(length));
     callMethod('splice', args);
   }
 
@@ -487,7 +487,7 @@ Object _convertToDart(o) {
     var ms = JS('num', '#.getTime()', o);
     return new DateTime.fromMillisecondsSinceEpoch(ms);
   } else if (o is _DartObject &&
-             JS('bool', 'dart.jsobject != dart.realRuntimeType(#)', o)) {
+             JS('bool', 'dart.jsobject != dart.getReifiedType(#)', o)) {
     return o._dartObj;
   } else {
     return _putIfAbsent(_dartProxies, o, _wrapToDart);

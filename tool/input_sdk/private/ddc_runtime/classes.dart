@@ -124,9 +124,8 @@ final _staticSig = JS('', 'Symbol("sigStatic")');
 
 /// Get the type of a method from an object using the stored signature
 getMethodType(obj, name) => JS('', '''(() => {
-  if ($obj === void 0) return void 0;
-  if ($obj == null) return void 0;
-  return $getMethodTypeFromType($obj.__proto__.constructor, $name);
+  let type = $obj == null ? $Object : $obj.__proto__.constructor;
+  return $getMethodTypeFromType(type, $name);
 })()''');
 
 /// Get the type of a method from a type using the stored signature
@@ -171,6 +170,17 @@ bind(obj, name, f) => JS('', '''(() => {
   return $f;
 })()''');
 
+/// Instantiate a generic method.
+///
+/// We need to apply the type arguments both to the function, as well as its
+/// associated function type.
+gbind(f, @rest typeArgs) {
+  var result = JS('', '#(...#)', f, typeArgs);
+  var sig = JS('', '#(...#)', _getRuntimeType(f), typeArgs);
+  tag(result, sig);
+  return result;
+}
+
 // Set up the method signature field on the constructor
 _setMethodSignature(f, sigF) => JS('', '''(() => {
   $defineMemoizedGetter($f, $_methodSig, () => {
@@ -193,7 +203,7 @@ _setStaticTypes(f, names) => JS('', '''(() => {
   for (let name of $names) {
     // TODO(vsm): Need to generate static methods.
     if (!$f[name]) continue;
-    $tagMemoized($f[name], function() {
+    $tagLazy($f[name], function() {
       let parts = $f[$_staticSig][name];
       return $definiteFunctionType.apply(null, parts);
     })
@@ -224,31 +234,10 @@ setSignature(f, signature) => JS('', '''(() => {
   $_setMethodSignature($f, methods);
   $_setStaticSignature($f, statics);
   $_setStaticTypes($f, names);
-  $tagMemoized($f, () => $Type);
+  $tagLazy($f, () => $Type);
 })()''');
 
 hasMethod(obj, name) => JS('', '$getMethodType($obj, $name) !== void 0');
-
-///
-/// This is called whenever a derived class needs to introduce a new field,
-/// shadowing a field or getter/setter pair on its parent.
-///
-/// This is important because otherwise, trying to read or write the field
-/// would end up calling the getter or setter, and one of those might not even
-/// exist, resulting in a runtime error. Even if they did exist, that's the
-/// wrong behavior if a new field was declared.
-///
-virtualField(subclass, fieldName) => JS('', '''(() => {
-  // If the field is already overridden, do nothing.
-  let prop = $getOwnPropertyDescriptor($subclass.prototype, $fieldName);
-  if (prop) return;
-
-  let symbol = Symbol($subclass.name + '.' + $fieldName.toString());
-  $defineProperty($subclass.prototype, $fieldName, {
-    get: function() { return this[symbol]; },
-    set: function(x) { this[symbol] = x; }
-  });
-})()''');
 
 ///
 /// Given a class and an initializer method name, creates a constructor
@@ -268,7 +257,7 @@ final _extensionType = JS('', 'Symbol("extensionType")');
 
 getExtensionType(obj) => JS('', '$obj[$_extensionType]');
 
-final dartx = JS('', '{}');
+final dartx = JS('', 'dartx');
 
 getExtensionSymbol(name) => JS('', '''(() => {
   let sym = $dartx[$name];

@@ -11,9 +11,11 @@ final _mixins = JS('', 'Symbol("mixins")');
 final implements_ = JS('', 'Symbol("implements")');
 final metadata = JS('', 'Symbol("metadata")');
 
+/// The symbol used to store the cached `Type` object associated with a class.
+final _typeObject = JS('', 'Symbol("typeObject")');
 
+/// Types in dart are represented internally at runtime as follows.
 ///
-/// Types in dart are represented at runtime as follows.
 ///   - Normal nominal types, produced from classes, are represented
 ///     at runtime by the JS class of which they are an instance.
 ///     If the type is the result of instantiating a generic class,
@@ -33,15 +35,19 @@ final metadata = JS('', 'Symbol("metadata")');
 ///   - As an instance of TypeDef.  The TypeDef representation lazily
 ///     computes an instance of FunctionType, and delegates to that instance.
 ///
-/// All types satisfy the following interface:
-///  get String name;
-///  String toString();
+/// These above "runtime types" are what is used for implementing DDC's
+/// internal type checks. These objects are distinct from the objects exposed
+/// to user code by class literals and calling `Object.runtimeType`. In DDC,
+/// the latter are represented by instances of WrappedType which contain a
+/// real runtime type internally. This ensures that the returned object only
+/// exposes the API that Type defines:
 ///
-///
-final _TypeRepBase = JS('', '$LazyTagged(() => $Type)');
+///     get String name;
+///     String toString();
 final TypeRep = JS('', '''
-  class TypeRep extends $_TypeRepBase {
-    get name() {return this.toString();}
+  class TypeRep {
+    get name() { return this.toString(); }
+    get [$_runtimeType]() { return $Type; }
   }
 ''');
 
@@ -74,6 +80,16 @@ final JSObject = JS('', '''
   }
 ''');
 final jsobject = JS('', 'new $JSObject()');
+
+final WrappedType = JS('', '''
+  class WrappedType extends $TypeRep {
+    constructor(type) {
+      super();
+      this._runtimeType = type;
+    }
+    toString() { return $typeName(this._runtimeType); }
+  }
+''');
 
 final AbstractFunctionType = JS('', '''
   class AbstractFunctionType extends $TypeRep {
@@ -241,7 +257,26 @@ final Typedef = JS('', '''
   }
 ''');
 
+final _typeFormalCount = JS('', 'Symbol("_typeFormalCount")');
+
 _functionType(definite, returnType, args, extra) => JS('', '''(() => {
+  // TODO(jmesserly): this is a bit of a retrofit, to easily fit
+  // generic functions into all of the existing ways we generate function
+  // signatures. Given `(T) => [T, [T]]` we'll return a function that does
+  // `(T) => _functionType(definite, T, [T])` ... we could do this in the
+  // compiler instead, at a slight cost to code size.
+  if ($args === void 0 && $extra === void 0) {
+    const fnTypeParts = $returnType;
+    // A closure that computes the remaining arguments.
+    // Return a function that makes the type.
+    function makeGenericFnType(...types) {
+      let parts = fnTypeParts(...types);
+      return $_functionType($definite, parts[0], parts[1], parts[2]);
+    }
+    makeGenericFnType[$_typeFormalCount] = fnTypeParts.length;
+    return makeGenericFnType;
+  }
+
   // TODO(vsm): Cache / memomize?
   let optionals;
   let named;
@@ -262,43 +297,48 @@ _functionType(definite, returnType, args, extra) => JS('', '''(() => {
 /// Create a "fuzzy" function type.  If any arguments are dynamic
 /// they will be replaced with bottom.
 ///
-functionType(returnType, args, extra) => JS('', '''(() => {
-  return $_functionType(false, $returnType, $args, $extra);
-})()''');
+functionType(returnType, args, extra) =>
+    _functionType(false, returnType, args, extra);
 
 ///
 /// Create a definite function type. No substitution of dynamic for
 /// bottom occurs.
 ///
-definiteFunctionType(returnType, args, extra) => JS('', '''(() => {
-  return $_functionType(true, $returnType, $args, $extra);
-})()''');
+definiteFunctionType(returnType, args, extra) =>
+    _functionType(true, returnType, args, extra);
 
-typedef(name, closure) => JS('', '''(() => {
-  return new $Typedef($name, $closure);
-})()''');
+typedef(name, closure) => JS('', 'new #(#, #)', Typedef, name, closure);
 
-isDartType(type) => JS('', '''(() => {
-  return $read($type) === $Type;
-})()''');
+bool isDartType(type) => JS('bool', '#(#) === #', _getRuntimeType, type, Type);
 
 typeName(type) => JS('', '''(() => {
   // Non-instance types
   if ($type instanceof $TypeRep) return $type.toString();
   // Instance types
-  let tag = $read($type);
+  let tag = $_getRuntimeType($type);
   if (tag === $Type) {
     let name = $type.name;
     let args = $getGenericArgs($type);
-    if (args) {
-      name += '<';
-      for (let i = 0; i < args.length; ++i) {
-        if (i > 0) name += ', ';
-        name += $typeName(args[i]);
-      }
-      name += '>';
+    if (!args) return name;
+
+    let result = name;
+    let allDynamic = true;
+
+    result += '<';
+    for (let i = 0; i < args.length; ++i) {
+      if (i > 0) name += ', ';
+
+      let argName = $typeName(args[i]);
+      if (argName != 'dynamic') allDynamic = false;
+
+      result += argName;
     }
-    return name;
+    result += '>';
+
+    // Don't print the type arguments if they are all dynamic. Show "raw"
+    // types as just the bare type name.
+    if (allDynamic) return name;
+    return result;
   }
   if (tag) return "Not a type: " + tag.name;
   return "JSObject<" + $type.name + ">";
@@ -311,9 +351,9 @@ getImplicitFunctionType(type) => JS('', '''(() => {
   return $getMethodTypeFromType(type, 'call');
 })()''');
 
-isFunctionType(type) => JS('', '''(() => {
-  return $type instanceof $AbstractFunctionType || $type == $Function;
-})()''');
+isFunctionType(type) =>
+    JS('bool', '# instanceof # || # === #',
+        type, AbstractFunctionType, type, Function);
 
 isFunctionSubType(ft1, ft2) => JS('', '''(() => {
   if ($ft2 == $Function) {
@@ -393,16 +433,16 @@ isFunctionSubType(ft1, ft2) => JS('', '''(() => {
 ///
 // TODO(jmesserly): lots more needs to be done here.
 canonicalType(t) => JS('', '''(() => {
-  if ($t === Object) return $Object;
-  if ($t === Function) return $Function;
-  if ($t === Array) return $List;
+  if (t === Object) return Object;
+  if (t === Function) return Function;
+  if (t === Array) return List;
 
   // We shouldn't normally get here with these types, unless something strange
   // happens like subclassing Number in JS and passing it to Dart.
-  if ($t === String) return $String;
-  if ($t === Number) return $double;
-  if ($t === Boolean) return $bool;
-  return $t;
+  if (t === String) return String;
+  if (t === Number) return double;
+  if (t === Boolean) return bool;
+   return t;
 })()''');
 
 final subtypeMap = JS('', 'new Map()');
@@ -422,13 +462,9 @@ isSubtype(t1, t2) => JS('', '''(() => {
   return result;
 })()''');
 
-_isBottom(type) => JS('', '''(() => {
-  return $type == $bottom;
-})()''');
+_isBottom(type) => JS('bool', '# == #', type, bottom);
 
-_isTop(type) => JS('', '''(() => {
-  return $type == $Object || ($type == $dynamicR);
-})()''');
+_isTop(type) => JS('bool', '# == # || # == #', type, Object, type, dynamicR);
 
 isSubtype_(t1, t2) => JS('', '''(() => {
   $t1 = $canonicalType($t1);

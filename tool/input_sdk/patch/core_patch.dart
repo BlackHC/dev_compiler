@@ -12,7 +12,8 @@ import 'dart:_js_helper' show patch,
                               JSSyntaxRegExp,
                               Primitives,
                               stringJoinUnchecked,
-                              objectHashCode;
+                              objectHashCode,
+                              getTraceFromException;
 
 import 'dart:_foreign_helper' show JS;
 
@@ -41,7 +42,7 @@ class Object {
   }
 
   @patch
-  Type get runtimeType => JS('Type', 'dart.realRuntimeType(#)', this);
+  Type get runtimeType => JS('Type', 'dart.objectRuntimeType(#)', this);
 }
 
 // Patch for Function implementation.
@@ -263,10 +264,23 @@ class List<E> {
       list.add(e);
     }
     if (growable) return list;
-    return makeListFixedLength(list);
+    return makeListFixedLength/*<E>*/(list);
+  }
+
+  @patch
+  factory List.unmodifiable(Iterable elements) {
+    var result = new List<E>.from(elements, growable: false);
+    return makeFixedListUnmodifiable/*<E>*/(result);
   }
 }
 
+@patch
+class Map<K, V> {
+  @patch
+  factory Map.unmodifiable(Map other) {
+    return new UnmodifiableMapView<K, V>(new Map<K, V>.from(other));
+  }
+}
 
 @patch
 class String {
@@ -458,16 +472,14 @@ class StackTrace {
   @patch
   @NoInline()
   static StackTrace get current {
-    var error = JS('', 'new Error()');
-    var stack = JS('String|Null', '#.stack', error);
-    if (stack is String) return new StackTrace.fromString(stack);
     if (JS('', 'Error.captureStackTrace') != null) {
+      var error = JS('', 'new Error()');
       JS('void', 'Error.captureStackTrace(#)', error);
-      var stack = JS('String|Null', '#.stack', error);
-      if (stack is String) return new StackTrace.fromString(stack);
+      return getTraceFromException(error);
     }
+    // Fallback if Error.captureStackTrace does not exist.
     try {
-      throw 0;
+      throw '';
     } catch (_, stackTrace) {
       return stackTrace;
     }

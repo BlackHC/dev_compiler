@@ -2,10 +2,6 @@
 // Generated on Mon Apr 20 2015 06:33:20 GMT-0700 (PDT)
 
 module.exports = function(config) {
-  var harmony_flags = '--js-flags="' + [
-    '--harmony',
-  ].join(' ') + '"';
-
   var configuration = {
 
     // base path that will be used to resolve all patterns (eg. files, exclude)
@@ -23,14 +19,15 @@ module.exports = function(config) {
       'test/codegen/expect/async_helper/async_helper.js',
       'test/codegen/expect/dom/dom.js',
       'test/codegen/expect/expect/expect.js',
+      'test/codegen/expect/js/js.js',
       'test/codegen/expect/matcher/matcher.js',
-      'test/codegen/expect/matcher/src/*.js',
       'test/codegen/expect/unittest/unittest.js',
       'test/codegen/expect/syncstar_syntax.js',
-      'test/codegen/expect/language-all.js',
+      'test/codegen/expect/language/**.js',
       'test/codegen/expect/language/sub/sub.js',
       'test/codegen/expect/language/*.lib',
-      'test/codegen/expect/lib-typed_data-all.js',
+      'test/codegen/expect/lib/typed_data/**.js',
+      'test/codegen/expect/lib/html/**.js',
       'test/browser/*.js',
       'test-main.js',
     ],
@@ -77,16 +74,16 @@ module.exports = function(config) {
     customLaunchers: {
       chrome_travis: {
         base: 'Chrome',
-        flags: [ '--no-sandbox', harmony_flags ]
+        flags: [ '--no-sandbox' ]
       },
 
       chrome_canary_travis: {
         base: 'ChromeCanary',
-        flags: [ '--no-sandbox', harmony_flags ]
+        flags: [ '--no-sandbox' ]
       },
     },
 
-    browsers: ['ChromeCanary', 'Electron'],
+    browsers: ['Chrome'],
 
     // Continuous Integration mode
     // if true, Karma captures browsers, runs the tests and exits
@@ -94,7 +91,7 @@ module.exports = function(config) {
   };
 
   if (process.env.TRAVIS) {
-    configuration.browsers = ['chrome_canary_travis', 'Electron'];
+    configuration.browsers = ['chrome_canary_travis'];
     configuration.autoWatch = false;
     // Enable this for more logging on Travis.  It is too much for Travis to
     // automatically display, but still results in a downloadable raw log.
